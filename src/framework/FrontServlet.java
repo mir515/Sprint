@@ -10,7 +10,7 @@ import java.util.Set;
 
 public class FrontServlet extends HttpServlet {
 
-    private Map<String, Method> mappingUrls = new HashMap<>();
+    private Map<UrlMethod, MethodInfo> mappingUrls = new HashMap<>();
 
     @Override
     public void init() throws ServletException {
@@ -32,15 +32,31 @@ public class FrontServlet extends HttpServlet {
                 for (Method method : clazz.getDeclaredMethods()) {
                     for (java.lang.annotation.Annotation ann : method.getAnnotations()) {
                         if (ann.annotationType().getSimpleName().equals("Url")) {
+                            
                             Method valueMethod = ann.annotationType().getMethod("value");
                             String urlPath = (String) valueMethod.invoke(ann);
                             
-                            mappingUrls.put(urlPath, method);
+                            String httpMethod = "GET"; 
+                            try {
+                                Method methodAttr = ann.annotationType().getMethod("method");
+                                httpMethod = ((String) methodAttr.invoke(ann)).toUpperCase();
+                            } catch (NoSuchMethodException e) {
+                            }
+
+                            UrlMethod key = new UrlMethod(urlPath, httpMethod);
+
+                            if (mappingUrls.containsKey(key)) {
+                                throw new RuntimeException("URL dupliquée détectée : [" + httpMethod + "] /" + urlPath);
+                            }
+
+                            mappingUrls.put(key, new MethodInfo(className, method.getName()));
                         }
                     }
                 }
+            } catch (RuntimeException e) {
+                throw new ServletException(e.getMessage(), e);
             } catch (Exception e) {
-                System.err.println("[FrontController] Erreur mapping classe : " + className);
+                System.err.println("[FrontController] Erreur mapping classe " + className + " : " + e.getMessage());
             }
         }
     }
@@ -52,6 +68,7 @@ public class FrontServlet extends HttpServlet {
         PrintWriter out = res.getWriter();
 
         String pathInfo = req.getPathInfo();
+        String httpMethod = req.getMethod().toUpperCase();
         
         if (pathInfo == null || pathInfo.equals("/")) {
             out.println("<html><body><h3>Bienvenue. Veuillez spécifier une action (ex: /andran)</h3></body></html>");
@@ -59,26 +76,47 @@ public class FrontServlet extends HttpServlet {
         }
 
         String urlDemandee = pathInfo.substring(1);
+        UrlMethod key = new UrlMethod(urlDemandee, httpMethod);
 
         try {
-            if (!mappingUrls.containsKey(urlDemandee)) {
-                throw new UrlNotFoundException(urlDemandee, mappingUrls.keySet());
+            if (!mappingUrls.containsKey(key)) {
+                res.setStatus(HttpServletResponse.SC_NOT_FOUND);
+                out.println("<html><body>");
+                out.println("<h2>Erreur 404 - URL Introuvable</h2>");
+                out.println("<p>Aucun mapping trouvé pour la méthode <strong>" + httpMethod + "</strong> sur l'URL <strong>/" + urlDemandee + "</strong></p>");
+                out.println("<h3>Mappings disponibles :</h3><ul>");
+                for (UrlMethod mapped : mappingUrls.keySet()) {
+                    out.println("<li>[" + mapped.getMethod() + "] /" + mapped.getUrl() + "</li>");
+                }
+                out.println("</ul></body></html>");
+                return;
             }
 
-            Method methodeAssociee = mappingUrls.get(urlDemandee);
-            
-            out.println("<html><body>");
-            out.println("<h2>[FrontServlet] URL Valide !</h2>");
-            out.println("<p>Méthode associée : <strong>" + methodeAssociee.getName() + "()</strong></p>");
-            out.println("</body></html>");
+            MethodInfo info = mappingUrls.get(key);
+            Class<?> clazz = Class.forName(info.className, true, Thread.currentThread().getContextClassLoader());
+            Object instance = clazz.getDeclaredConstructor().newInstance();
 
-        } catch (UrlNotFoundException e) {
-            res.setStatus(HttpServletResponse.SC_NOT_FOUND); 
-            
-            out.println("<html><body style='font-family: Arial, sans-serif; margin: 40px;'>");
-            out.println("<h2 style='color: #cc0000;'>Erreur 404 - URL Introuvable</h2>");
-            out.println("<p style='font-size: 16px;'>" + e.getMessage() + "</p>");
-            out.println("</body></html>");
+            Method methodToInvoke = null;
+            try {
+                methodToInvoke = clazz.getMethod(info.methodName, HttpServletRequest.class, HttpServletResponse.class);
+                methodToInvoke.invoke(instance, req, res);
+            } catch (NoSuchMethodException e) {
+                methodToInvoke = clazz.getMethod(info.methodName);
+                methodToInvoke.invoke(instance);
+                
+                out.println("<html><body>");
+                out.println("<h2>Exécution réussie !</h2>");
+                out.println("<p><strong>URL appelée :</strong> /" + urlDemandee + "</p>");
+                out.println("<p><strong>Méthode HTTP :</strong>" + httpMethod + "</span></p>");
+                out.println("<p><strong>Fonction invoquée :</strong> <code>" + info.methodName + "()</code></p>");
+                out.println("<p><strong>Classe :</strong> <code>" + info.className + "</code></p>");
+                out.println("</body></html>");
+            }
+
+        } catch (Exception e) {
+            res.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+            out.println("<html><body><h2>Erreur 500 - Erreur d'exécution</h2>");
+            out.println("<p>" + e.getCause() + "</p></body></html>");
         }
     }
 
@@ -89,6 +127,16 @@ public class FrontServlet extends HttpServlet {
 
     @Override
     protected void doPost(HttpServletRequest req, HttpServletResponse res) throws ServletException, IOException {
+        processRequest(req, res);
+    }
+
+    @Override
+    protected void doPut(HttpServletRequest req, HttpServletResponse res) throws ServletException, IOException {
+        processRequest(req, res);
+    }
+
+    @Override
+    protected void doDelete(HttpServletRequest req, HttpServletResponse res) throws ServletException, IOException {
         processRequest(req, res);
     }
 }
