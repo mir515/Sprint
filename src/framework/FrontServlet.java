@@ -1,142 +1,116 @@
 package framework;
 
-import jakarta.servlet.*;
-import jakarta.servlet.http.*;
-import java.io.*;
+import java.io.IOException;
+import java.io.PrintWriter;
 import java.lang.reflect.Method;
-import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServlet;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+
 public class FrontServlet extends HttpServlet {
 
-    private Map<UrlMethod, MethodInfo> mappingUrls = new HashMap<>();
+    private static Set<String> uris = new HashSet<>();
 
     @Override
     public void init() throws ServletException {
-        String packageName = getInitParameter("packageName");
-        String annotation  = getInitParameter("annotation");
-
-        if (packageName == null || packageName.isEmpty() || annotation == null || annotation.isEmpty()) {
-            throw new ServletException("[FrontController] Paramètres 'packageName' ou 'annotation' manquants.");
-        }
-
-        PackageScanner packageScanner = new PackageScanner();
-        Set<String> classNames = packageScanner.findAnnotedClasses(annotation, packageName);
-        ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
-
-        for (String className : classNames) {
-            try {
-                Class<?> clazz = Class.forName(className, true, classLoader);
-                
-                for (Method method : clazz.getDeclaredMethods()) {
-                    for (java.lang.annotation.Annotation ann : method.getAnnotations()) {
-                        if (ann.annotationType().getSimpleName().equals("Url")) {
-                            
-                            Method valueMethod = ann.annotationType().getMethod("value");
-                            String urlPath = (String) valueMethod.invoke(ann);
-                            
-                            String httpMethod = "GET"; 
-                            try {
-                                Method methodAttr = ann.annotationType().getMethod("method");
-                                httpMethod = ((String) methodAttr.invoke(ann)).toUpperCase();
-                            } catch (NoSuchMethodException e) {
-                            }
-
-                            UrlMethod key = new UrlMethod(urlPath, httpMethod);
-
-                            if (mappingUrls.containsKey(key)) {
-                                throw new RuntimeException("URL dupliquée détectée : [" + httpMethod + "] /" + urlPath);
-                            }
-
-                            mappingUrls.put(key, new MethodInfo(className, method.getName()));
-                        }
-                    }
-                }
-            } catch (RuntimeException e) {
-                throw new ServletException(e.getMessage(), e);
-            } catch (Exception e) {
-                System.err.println("[FrontController] Erreur mapping classe " + className + " : " + e.getMessage());
-            }
-        }
+        System.out.println("[Framework] FrontControllerServlet initialise");
     }
 
-    protected void processRequest(HttpServletRequest req, HttpServletResponse res)
+    @Override
+    protected void doGet(HttpServletRequest req, HttpServletResponse resp)
             throws ServletException, IOException {
-        
-        res.setContentType("text/html;charset=UTF-8");
-        PrintWriter out = res.getWriter();
+        processRequest(req, resp);
+    }
 
-        String pathInfo = req.getPathInfo();
-        String httpMethod = req.getMethod().toUpperCase();
-        
-        if (pathInfo == null || pathInfo.equals("/")) {
-            out.println("<html><body><h3>Bienvenue. Veuillez spécifier une action (ex: /andran)</h3></body></html>");
-            return;
+    @Override
+    protected void doPost(HttpServletRequest req, HttpServletResponse resp)
+            throws ServletException, IOException {
+        processRequest(req, resp);
+    }
+
+    @Override
+    protected void doPut(HttpServletRequest req, HttpServletResponse resp)
+            throws ServletException, IOException {
+        processRequest(req, resp);
+    }
+
+    @Override
+    protected void doDelete(HttpServletRequest req, HttpServletResponse resp)
+            throws ServletException, IOException {
+        processRequest(req, resp);
+    }
+
+    protected void processRequest(HttpServletRequest req, HttpServletResponse resp)
+            throws ServletException, IOException {
+
+        // Si une erreur est survenue durant le scan à l'initialisation, on bloque tout ici
+        if (AppListener.initError != null) {
+            throw new ServletException(AppListener.initError);
         }
 
-        String urlDemandee = pathInfo.substring(1);
-        UrlMethod key = new UrlMethod(urlDemandee, httpMethod);
+        String uri = req.getRequestURI();
+        String contextPath = req.getContextPath();
+        String chemin = uri.substring(contextPath.length());
+        String httpMethod = req.getMethod();
 
-        try {
-            if (!mappingUrls.containsKey(key)) {
-                res.setStatus(HttpServletResponse.SC_NOT_FOUND);
-                out.println("<html><body>");
-                out.println("<h2>Erreur 404 - URL Introuvable</h2>");
-                out.println("<p>Aucun mapping trouvé pour la méthode <strong>" + httpMethod + "</strong> sur l'URL <strong>/" + urlDemandee + "</strong></p>");
-                out.println("<h3>Mappings disponibles :</h3><ul>");
-                for (UrlMethod mapped : mappingUrls.keySet()) {
-                    out.println("<li>[" + mapped.getMethod() + "] /" + mapped.getUrl() + "</li>");
-                }
-                out.println("</ul></body></html>");
-                return;
-            }
+        uris.add(chemin);
 
-            MethodInfo info = mappingUrls.get(key);
-            Class<?> clazz = Class.forName(info.className, true, Thread.currentThread().getContextClassLoader());
-            Object instance = clazz.getDeclaredConstructor().newInstance();
+        resp.setContentType("text/html");
+        PrintWriter out = resp.getWriter();
 
-            Method methodToInvoke = null;
+        out.println("<html><body>");
+        out.println("<h1>URL: " + chemin + "</h1>");
+        out.println("<p>Methode HTTP: " + httpMethod + "</p>");
+
+        UrlMethod key = new UrlMethod(chemin, httpMethod);
+
+        if (AppListener.urlMethodMappings.containsKey(key)) {
+            MethodInfo info = AppListener.urlMethodMappings.get(key);
+            String simpleName = info.className.substring(info.className.lastIndexOf('.') + 1);
+            out.println("<p>Classe: " + simpleName + "</p>");
+            out.println("<p>Methode: " + info.methodName + "</p>");
+
             try {
-                methodToInvoke = clazz.getMethod(info.methodName, HttpServletRequest.class, HttpServletResponse.class);
-                methodToInvoke.invoke(instance, req, res);
-            } catch (NoSuchMethodException e) {
-                methodToInvoke = clazz.getMethod(info.methodName);
-                methodToInvoke.invoke(instance);
-                
-                out.println("<html><body>");
-                out.println("<h2>Exécution réussie !</h2>");
-                out.println("<p><strong>URL appelée :</strong> /" + urlDemandee + "</p>");
-                out.println("<p><strong>Méthode HTTP :</strong>" + httpMethod + "</span></p>");
-                out.println("<p><strong>Fonction invoquée :</strong> <code>" + info.methodName + "()</code></p>");
-                out.println("<p><strong>Classe :</strong> <code>" + info.className + "</code></p>");
-                out.println("</body></html>");
+                Class<?> clazz = Class.forName(info.className);
+                Object instance = clazz.getDeclaredConstructor().newInstance();
+
+                Method method = null;
+                try {
+                    method = clazz.getMethod(info.methodName, HttpServletRequest.class, HttpServletResponse.class);
+                    method.invoke(instance, req, resp);
+                } catch (NoSuchMethodException e) {
+                    method = clazz.getMethod(info.methodName);
+                    method.invoke(instance);
+                }
+
+            } catch (Exception e) {
+                throw new ServletException(e);
             }
-
-        } catch (Exception e) {
-            res.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
-            out.println("<html><body><h2>Erreur 500 - Erreur d'exécution</h2>");
-            out.println("<p>" + e.getCause() + "</p></body></html>");
+        } else {
+            out.println("<p style='color:red;'>404 - Aucun mapping pour: " + httpMethod + " " + chemin + "</p>");
+            out.println("<h2>Mappings disponibles</h2><ul>");
+            for (Map.Entry<UrlMethod, MethodInfo> entry : AppListener.urlMethodMappings.entrySet()) {
+                String simpleName = entry.getValue().className
+                        .substring(entry.getValue().className.lastIndexOf('.') + 1);
+                out.println(
+                        "<li><strong>" + entry.getKey().getMethod() + "</strong> " + entry.getKey().getUrl() + " -> " +
+                                simpleName + "." + entry.getValue().methodName + "</li>");
+            }
+            out.println("</ul>");
         }
-    }
 
-    @Override
-    protected void doGet(HttpServletRequest req, HttpServletResponse res) throws ServletException, IOException {
-        processRequest(req, res);
-    }
+        out.println("<hr>");
+        out.println("<h2>URLs visitees (" + uris.size() + ")</h2><ul>");
+        for (String lien : uris) {
+            out.println("<li>" + lien + "</li>");
+        }
+        out.println("</ul>");
 
-    @Override
-    protected void doPost(HttpServletRequest req, HttpServletResponse res) throws ServletException, IOException {
-        processRequest(req, res);
-    }
-
-    @Override
-    protected void doPut(HttpServletRequest req, HttpServletResponse res) throws ServletException, IOException {
-        processRequest(req, res);
-    }
-
-    @Override
-    protected void doDelete(HttpServletRequest req, HttpServletResponse res) throws ServletException, IOException {
-        processRequest(req, res);
+        out.println("</body></html>");
     }
 }
