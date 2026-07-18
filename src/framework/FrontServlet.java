@@ -7,6 +7,7 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
+import jakarta.servlet.RequestDispatcher;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
@@ -48,7 +49,6 @@ public class FrontServlet extends HttpServlet {
     protected void processRequest(HttpServletRequest req, HttpServletResponse resp)
             throws ServletException, IOException {
 
-        // Si une erreur est survenue durant le scan à l'initialisation, on bloque tout ici
         if (AppListener.initError != null) {
             throw new ServletException(AppListener.initError);
         }
@@ -60,57 +60,82 @@ public class FrontServlet extends HttpServlet {
 
         uris.add(chemin);
 
-        resp.setContentType("text/html");
-        PrintWriter out = resp.getWriter();
-
-        out.println("<html><body>");
-        out.println("<h1>URL: " + chemin + "</h1>");
-        out.println("<p>Methode HTTP: " + httpMethod + "</p>");
-
         UrlMethod key = new UrlMethod(chemin, httpMethod);
 
         if (AppListener.urlMethodMappings.containsKey(key)) {
             MethodInfo info = AppListener.urlMethodMappings.get(key);
             String simpleName = info.className.substring(info.className.lastIndexOf('.') + 1);
-            out.println("<p>Classe: " + simpleName + "</p>");
-            out.println("<p>Methode: " + info.methodName + "</p>");
 
             try {
                 Class<?> clazz = Class.forName(info.className);
                 Object instance = clazz.getDeclaredConstructor().newInstance();
 
-                Method method = null;
+                Object result = null;
+
                 try {
-                    method = clazz.getMethod(info.methodName, HttpServletRequest.class, HttpServletResponse.class);
-                    method.invoke(instance, req, resp);
+                    Method method = clazz.getMethod(info.methodName, HttpServletRequest.class,
+                            HttpServletResponse.class);
+                    result = method.invoke(instance, req, resp);
                 } catch (NoSuchMethodException e) {
-                    method = clazz.getMethod(info.methodName);
-                    method.invoke(instance);
+                    Method method = clazz.getMethod(info.methodName);
+                    result = method.invoke(instance);
                 }
+
+                // SI result est ModelAndView
+                if (result != null && result instanceof ModelAndView) {
+                    ModelAndView mv = (ModelAndView) result;
+
+                    if (mv.getData() != null) {
+                        for (Map.Entry<String, Object> entry : mv.getData().entrySet()) {
+                            req.setAttribute(entry.getKey(), entry.getValue());
+                        }
+                    }
+
+                    String viewPath = AppListener.viewPrefix + mv.getViewName() + AppListener.viewSuffix;
+                    RequestDispatcher dispatcher = req.getRequestDispatcher(viewPath);
+                    dispatcher.forward(req, resp);
+                    return;
+                }
+
+                // SI result est String
+                if (result != null && result instanceof String) {
+                    String viewPath = AppListener.viewPrefix + result.toString() + AppListener.viewSuffix;
+                    RequestDispatcher dispatcher = req.getRequestDispatcher(viewPath);
+                    dispatcher.forward(req, resp);
+                    return;
+                }
+
+                // SINON affichage par défaut
+                resp.setContentType("text/html");
+                PrintWriter out = resp.getWriter();
+                out.println("<html><body>");
+                out.println("<h1>URL: " + chemin + "</h1>");
+                out.println("<p>Methode HTTP: " + httpMethod + "</p>");
+                out.println("<p>Classe: " + simpleName + "</p>");
+                out.println("<p>Methode: " + info.methodName + "</p>");
+                if (result != null) {
+                    out.println("<p>Retour: " + result.toString() + "</p>");
+                }
+                out.println("</body></html>");
 
             } catch (Exception e) {
                 throw new ServletException(e);
             }
         } else {
-            out.println("<p style='color:red;'>404 - Aucun mapping pour: " + httpMethod + " " + chemin + "</p>");
+            resp.setContentType("text/html");
+            PrintWriter out = resp.getWriter();
+            out.println("<html><body>");
+            out.println("<h1>404 - Aucun mapping pour: " + httpMethod + " " + chemin + "</h1>");
             out.println("<h2>Mappings disponibles</h2><ul>");
             for (Map.Entry<UrlMethod, MethodInfo> entry : AppListener.urlMethodMappings.entrySet()) {
                 String simpleName = entry.getValue().className
                         .substring(entry.getValue().className.lastIndexOf('.') + 1);
                 out.println(
-                        "<li><strong>" + entry.getKey().getMethod() + "</strong> " + entry.getKey().getUrl() + " -> " +
+                        "<li>" + entry.getKey().getMethod() + " " + entry.getKey().getUrl() + " -> " +
                                 simpleName + "." + entry.getValue().methodName + "</li>");
             }
             out.println("</ul>");
+            out.println("</body></html>");
         }
-
-        out.println("<hr>");
-        out.println("<h2>URLs visitees (" + uris.size() + ")</h2><ul>");
-        for (String lien : uris) {
-            out.println("<li>" + lien + "</li>");
-        }
-        out.println("</ul>");
-
-        out.println("</body></html>");
     }
 }
