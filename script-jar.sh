@@ -1,13 +1,12 @@
 #!/bin/bash
-# 1. Aller dans le dossier du framework
-cd /home/princy/Documents/NAINA/framework
+cd /home/princy/Documents/NAINA/Sprint || exit
 mkdir -p bin
 
-
-
-echo "Compilation des sources..."
+echo "Compilation des sources pour Java 21..."
 find src -name "*.java" > sources.txt
-javac -cp "lib/servlet-api.jar" -d bin @sources.txt
+
+# Compilation avec Java 21 et le classpath Jakarta / Gson
+javac --release 21 -cp "lib/servlet-api.jar:lib/gson.jar" -d bin @sources.txt
 rm sources.txt
 
 echo "Création du framework.jar..."

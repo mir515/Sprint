@@ -1,141 +1,120 @@
 package framework;
 
 import java.io.IOException;
-import java.io.PrintWriter;
 import java.lang.reflect.Method;
-import java.util.HashSet;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 
-import jakarta.servlet.RequestDispatcher;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
+import framework.annotation.Controller;
+import framework.annotation.UrlMapping;
+
 public class FrontServlet extends HttpServlet {
 
-    private static Set<String> uris = new HashSet<>();
+    private Map<String, VerbAction> mappings = new HashMap<>();
 
     @Override
     public void init() throws ServletException {
-        System.out.println("[Framework] FrontControllerServlet initialise");
-    }
+        super.init();
+        try {
+            // Récupère le package de base configuré dans le web.xml (ou utilise une valeur par défaut/dynamique)
+            // Exemple : vous pouvez récupérer un init-param du web.xml, ou scanner un package racine si nécessaire.
+            String basePackage = getServletConfig().getInitParameter("basePackage");
+            
+            if (basePackage == null || basePackage.isEmpty()) {
+                throw new ServletException("Le paramètre d'initialisation 'basePackage' est obligatoire dans le web.xml");
+            }
 
-    @Override
-    protected void doGet(HttpServletRequest req, HttpServletResponse resp)
-            throws ServletException, IOException {
-        processRequest(req, resp);
-    }
+            PackageScanner scanner = new PackageScanner();
+            // Utilise le PackageScanner pour trouver toutes les classes annotées @Controller
+            Set<String> controllerClasses = scanner.findAnnotedClasses("Controller", basePackage);
 
-    @Override
-    protected void doPost(HttpServletRequest req, HttpServletResponse resp)
-            throws ServletException, IOException {
-        processRequest(req, resp);
-    }
+            for (String className : controllerClasses) {
+                registerController(className);
+            }
 
-    @Override
-    protected void doPut(HttpServletRequest req, HttpServletResponse resp)
-            throws ServletException, IOException {
-        processRequest(req, resp);
-    }
-
-    @Override
-    protected void doDelete(HttpServletRequest req, HttpServletResponse resp)
-            throws ServletException, IOException {
-        processRequest(req, resp);
-    }
-
-    protected void processRequest(HttpServletRequest req, HttpServletResponse resp)
-            throws ServletException, IOException {
-
-        if (AppListener.initError != null) {
-            throw new ServletException(AppListener.initError);
+        } catch (Exception e) {
+            throw new ServletException("Erreur lors de l'initialisation du mapping dynamique avec PackageScanner", e);
         }
+    }
 
+    /**
+     * Enregistre les routes d'une classe contrôleur donnée par son nom complet.
+     */
+    private void registerController(String className) {
+        try {
+            Class<?> clazz = Class.forName(className);
+            Object controllerInstance = clazz.getDeclaredConstructor().newInstance();
+
+            for (Method method : clazz.getDeclaredMethods()) {
+                if (method.isAnnotationPresent(UrlMapping.class)) {
+                    String url = method.getAnnotation(UrlMapping.class).value();
+                    mappings.put(url, new VerbAction(controllerInstance, method));
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("[FrontServlet] Impossible d'enregistrer le contrôleur : " + className + " (" + e.getMessage() + ")");
+        }
+    }
+
+    protected void processRequest(HttpServletRequest req, HttpServletResponse resp) 
+            throws ServletException, IOException {
+        
         String uri = req.getRequestURI();
         String contextPath = req.getContextPath();
-        String chemin = uri.substring(contextPath.length());
-        String httpMethod = req.getMethod();
+        String path = uri.substring(contextPath.length());
 
-        uris.add(chemin);
-
-        UrlMethod key = new UrlMethod(chemin, httpMethod);
-
-        if (AppListener.urlMethodMappings.containsKey(key)) {
-            MethodInfo info = AppListener.urlMethodMappings.get(key);
-            String simpleName = info.className.substring(info.className.lastIndexOf('.') + 1);
-
-            try {
-                Class<?> clazz = Class.forName(info.className);
-                Object instance = clazz.getDeclaredConstructor().newInstance();
-
-                Object result = null;
-
-                try {
-                    Method method = clazz.getMethod(info.methodName, HttpServletRequest.class,
-                            HttpServletResponse.class);
-                    result = method.invoke(instance, req, resp);
-                } catch (NoSuchMethodException e) {
-                    Method method = clazz.getMethod(info.methodName);
-                    result = method.invoke(instance);
-                }
-
-                // SI result est ModelAndView
-                if (result != null && result instanceof ModelAndView) {
-                    ModelAndView mv = (ModelAndView) result;
-
-                    if (mv.getData() != null) {
-                        for (Map.Entry<String, Object> entry : mv.getData().entrySet()) {
-                            req.setAttribute(entry.getKey(), entry.getValue());
-                        }
-                    }
-
-                    String viewPath = AppListener.viewPrefix + mv.getViewName() + AppListener.viewSuffix;
-                    RequestDispatcher dispatcher = req.getRequestDispatcher(viewPath);
-                    dispatcher.forward(req, resp);
-                    return;
-                }
-
-                // SI result est String
-                if (result != null && result instanceof String) {
-                    String viewPath = AppListener.viewPrefix + result.toString() + AppListener.viewSuffix;
-                    RequestDispatcher dispatcher = req.getRequestDispatcher(viewPath);
-                    dispatcher.forward(req, resp);
-                    return;
-                }
-
-                // SINON affichage par défaut
-                resp.setContentType("text/html");
-                PrintWriter out = resp.getWriter();
-                out.println("<html><body>");
-                out.println("<h1>URL: " + chemin + "</h1>");
-                out.println("<p>Methode HTTP: " + httpMethod + "</p>");
-                out.println("<p>Classe: " + simpleName + "</p>");
-                out.println("<p>Methode: " + info.methodName + "</p>");
-                if (result != null) {
-                    out.println("<p>Retour: " + result.toString() + "</p>");
-                }
-                out.println("</body></html>");
-
-            } catch (Exception e) {
-                throw new ServletException(e);
-            }
-        } else {
-            resp.setContentType("text/html");
-            PrintWriter out = resp.getWriter();
-            out.println("<html><body>");
-            out.println("<h1>404 - Aucun mapping pour: " + httpMethod + " " + chemin + "</h1>");
-            out.println("<h2>Mappings disponibles</h2><ul>");
-            for (Map.Entry<UrlMethod, MethodInfo> entry : AppListener.urlMethodMappings.entrySet()) {
-                String simpleName = entry.getValue().className
-                        .substring(entry.getValue().className.lastIndexOf('.') + 1);
-                out.println(
-                        "<li>" + entry.getKey().getMethod() + " " + entry.getKey().getUrl() + " -> " +
-                                simpleName + "." + entry.getValue().methodName + "</li>");
-            }
-            out.println("</ul>");
-            out.println("</body></html>");
+        // Vérification de l'existence de la route
+        VerbAction verbAction = mappings.get(path);
+        if (verbAction == null) {
+            throw new ServletException("Aucune méthode ou URL associée au chemin : " + path);
         }
+
+        Method method = verbAction.getMethod();
+        Object controller = verbAction.getControllerInstance();
+
+        if (method == null || controller == null) {
+            throw new ServletException("Action ou instance introuvable pour le chemin : " + path);
+        }
+
+        try {
+            // Matching des paramètres HTTP avec les arguments de la méthode
+            Object[] args = MethodMapper.resolveParameters(method, req);
+
+            //Invocation dynamique
+            System.out.println("--> Execution de la méthode : " + method.getName());
+
+            Object result = method.invoke(controller, args);
+            
+            System.out.println("<-- Fin execution. Résultat retourné : " + result);
+
+            // Redirection vers la vue
+            if (result instanceof String) {
+                String viewPath = (String) result;
+                req.getRequestDispatcher(viewPath).forward(req, resp);
+            } else if (result != null) {
+                throw new ServletException("Le type de retour de la méthode " + method.getName() + " doit être un String (chemin de la vue)");
+            }
+
+        } catch (Exception e) {
+            throw new ServletException("Erreur lors de l'exécution de la méthode " + method.getName(), e);
+        }
+    }
+
+    @Override
+    protected void doGet(HttpServletRequest req, HttpServletResponse resp) 
+            throws ServletException, IOException {
+        processRequest(req, resp);
+    }
+
+    @Override
+    protected void doPost(HttpServletRequest req, HttpServletResponse resp) 
+            throws ServletException, IOException {
+        processRequest(req, resp);
     }
 }
