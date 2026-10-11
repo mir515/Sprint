@@ -1,7 +1,10 @@
 package framework;
 
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
+import java.util.Arrays;
+import java.util.List;
 import jakarta.servlet.http.HttpServletRequest;
 
 public class MethodMapper {
@@ -12,33 +15,74 @@ public class MethodMapper {
      */
     public static Object[] resolveParameters(Method method, HttpServletRequest req) throws Exception {
         Parameter[] parameters = method.getParameters();
-
-        for (Parameter param : method.getParameters()) {
-            System.out.println("Nom du paramètre lu par Reflection : " + param.getName());
-            System.out.println("Valeur extraite de la requête HTTP : " + req.getParameter(param.getName()));
-        }
-        
         Object[] args = new Object[parameters.length];
 
         for (int i = 0; i < parameters.length; i++) {
             Parameter param = parameters[i];
-            
-            // Nom du paramètre de la méthode Java (ex: "id", "nom")
-            String paramName = param.getName();
-            
-            // Valeur envoyée par la vue (GET ou POST)
-            String rawValue = req.getParameter(paramName);
+            Class<?> targetType = param.getType();
 
-            // Conversion de la valeur String vers le type exact de la méthode
-            args[i] = convertValue(rawValue, param.getType());
+            if (HttpServletRequest.class.isAssignableFrom(targetType)) {
+                args[i] = req;
+                System.out.println("Injection directe de HttpServletRequest réussie !");
+                continue;
+            }
+
+            // Nom du paramètre de la méthode Java
+            String paramName = param.getName();
+            System.out.println("Nom du paramètre lu par Reflection : " + paramName);
+
+            // Gestion des Collections (ex: List)
+            if (List.class.isAssignableFrom(targetType)) {
+                String[] values = req.getParameterValues(paramName);
+                if (values == null) {
+                    args[i] = null;
+                } else {
+                    args[i] = Arrays.asList(values);
+                }
+                System.out.println("Valeur liste (Collection) extraite de la requête HTTP");
+                continue;
+            }
+
+            // Gestion des Objets Imbriqués 
+            if (!isSimpleType(targetType)) {
+                // Instanciation de l'objet (ex: new Employe())
+                Object complexObj = targetType.getDeclaredConstructor().newInstance();
+                
+                for (Field field : targetType.getDeclaredFields()) {
+                    field.setAccessible(true);
+                    String fieldName = field.getName();
+                    String rawValue = req.getParameter(fieldName);
+
+                    if (rawValue != null && !rawValue.trim().isEmpty()) {
+                        Object convertedValue = convertValue(rawValue, field.getType());
+                        field.set(complexObj, convertedValue);
+                    }
+                }
+                args[i] = complexObj;
+                System.out.println("Objet imbriqué/complexe instancié et hydraté : " + targetType.getSimpleName());
+                continue;
+            }
+
+            String rawValue = req.getParameter(paramName);
+            System.out.println("Valeur extraite de la requête HTTP : " + rawValue);
+
+            args[i] = convertValue(rawValue, targetType);
         }
 
         return args;
     }
 
     /**
+     * Vérifie si le type est un type simple (Primitif, Wrapper ou String).
+     */
+    private static boolean isSimpleType(Class<?> type) {
+        return type.isPrimitive() || type == String.class || 
+               type == Integer.class || type == Double.class || 
+               type == Float.class || type == Long.class || type == Boolean.class;
+    }
+
+    /**
      * Convertit une valeur String vers un type primitif / Object équivalent.
-     * Si la valeur est absente ou vide, renvoie la valeur par défaut (0, null, false...).
      */
     private static Object convertValue(String value, Class<?> targetType) {
         if (value == null || value.trim().isEmpty()) {
@@ -60,7 +104,6 @@ public class MethodMapper {
                 return Boolean.parseBoolean(value);
             }
         } catch (NumberFormatException e) {
-            // Si la conversion échoue (ex: "abc" vers int), on retourne la valeur par défaut
             return getDefaultValue(targetType);
         }
 
