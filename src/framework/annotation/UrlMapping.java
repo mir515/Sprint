@@ -5,5 +5,5 @@ import java.lang.annotation.*;
 @Target(ElementType.METHOD)
 public @interface UrlMapping {
     String value();
-    String method() default "GET"; // Ajout de l'attribut de méthode HTTP
+    String method() default "GET";
 }

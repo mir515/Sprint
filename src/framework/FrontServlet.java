@@ -1,51 +1,48 @@
 package framework;
 
 import java.io.IOException;
+import java.io.PrintWriter;
 import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 
+import com.google.gson.Gson;
+import framework.annotation.Controller;
+import framework.annotation.UrlMapping;
+import framework.annotation.WebApi;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
-import framework.annotation.Controller;
-import framework.annotation.UrlMapping;
-
 public class FrontServlet extends HttpServlet {
 
     private Map<String, VerbAction> mappings = new HashMap<>();
+    private Gson gson = new Gson();
 
     @Override
     public void init() throws ServletException {
         super.init();
         try {
-            // Récupère le package de base configuré dans le web.xml (ou utilise une valeur par défaut/dynamique)
-            // Exemple : vous pouvez récupérer un init-param du web.xml, ou scanner un package racine si nécessaire.
             String basePackage = getServletConfig().getInitParameter("basePackage");
-            
             if (basePackage == null || basePackage.isEmpty()) {
-                throw new ServletException("Le paramètre d'initialisation 'basePackage' est obligatoire dans le web.xml");
+                basePackage = "controllers";
             }
 
             PackageScanner scanner = new PackageScanner();
-            // Utilise le PackageScanner pour trouver toutes les classes annotées @Controller
             Set<String> controllerClasses = scanner.findAnnotedClasses("Controller", basePackage);
 
             for (String className : controllerClasses) {
                 registerController(className);
             }
 
+            System.out.println("[FrontServlet] Initialisation réussie. Routes enregistrées : " + mappings.keySet());
         } catch (Exception e) {
             throw new ServletException("Erreur lors de l'initialisation du mapping dynamique avec PackageScanner", e);
         }
     }
 
-    /**
-     * Enregistre les routes d'une classe contrôleur donnée par son nom complet.
-     */
     private void registerController(String className) {
         try {
             Class<?> clazz = Class.forName(className);
@@ -62,17 +59,17 @@ public class FrontServlet extends HttpServlet {
         }
     }
 
-    protected void processRequest(HttpServletRequest req, HttpServletResponse resp) 
+    protected void processRequest(HttpServletRequest req, HttpServletResponse resp)
             throws ServletException, IOException {
-        
+
         String uri = req.getRequestURI();
         String contextPath = req.getContextPath();
         String path = uri.substring(contextPath.length());
 
-        // Vérification de l'existence de la route
         VerbAction verbAction = mappings.get(path);
         if (verbAction == null) {
-            throw new ServletException("Aucune méthode ou URL associée au chemin : " + path);
+            resp.sendError(HttpServletResponse.SC_NOT_FOUND, "Aucune route associée à l'URL : " + path);
+            return;
         }
 
         Method method = verbAction.getMethod();
@@ -83,22 +80,24 @@ public class FrontServlet extends HttpServlet {
         }
 
         try {
-            // Matching des paramètres HTTP avec les arguments de la méthode
             Object[] args = MethodMapper.resolveParameters(method, req);
-
-            //Invocation dynamique
-            System.out.println("--> Execution de la méthode : " + method.getName());
-
             Object result = method.invoke(controller, args);
-            
-            System.out.println("<-- Fin execution. Résultat retourné : " + result);
 
-            // Redirection vers la vue
-            if (result instanceof String) {
-                String viewPath = (String) result;
-                req.getRequestDispatcher(viewPath).forward(req, resp);
-            } else if (result != null) {
-                throw new ServletException("Le type de retour de la méthode " + method.getName() + " doit être un String (chemin de la vue)");
+            if (method.isAnnotationPresent(WebApi.class)) {
+                resp.setContentType("application/json;charset=UTF-8");
+                String json = gson.toJson(result);
+                PrintWriter out = resp.getWriter();
+                out.print(json);
+                out.flush();
+            } else {
+                if (result instanceof String) {
+                    String viewPath = (String) result;
+                    req.getRequestDispatcher(viewPath).forward(req, resp);
+                } else if (result != null) {
+                    resp.sendError(
+                            HttpServletResponse.SC_INTERNAL_SERVER_ERROR,
+                            "Le type de retour de la méthode " + method.getName() + " doit être un String (chemin de la vue)");
+                }
             }
 
         } catch (Exception e) {
@@ -107,13 +106,13 @@ public class FrontServlet extends HttpServlet {
     }
 
     @Override
-    protected void doGet(HttpServletRequest req, HttpServletResponse resp) 
+    protected void doGet(HttpServletRequest req, HttpServletResponse resp)
             throws ServletException, IOException {
         processRequest(req, resp);
     }
 
     @Override
-    protected void doPost(HttpServletRequest req, HttpServletResponse resp) 
+    protected void doPost(HttpServletRequest req, HttpServletResponse resp)
             throws ServletException, IOException {
         processRequest(req, resp);
     }
