@@ -21,6 +21,11 @@ public class MethodMapper {
             Parameter param = parameters[i];
             Class<?> targetType = param.getType();
 
+            // FrontServlet reads multipart parts and fills these arguments.
+            if (targetType == FileUpload.class || targetType == FileUpload[].class) {
+                continue;
+            }
+
             if (HttpServletRequest.class.isAssignableFrom(targetType)) {
                 args[i] = req;
                 System.out.println("Injection directe de HttpServletRequest réussie !");
