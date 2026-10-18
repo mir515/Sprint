@@ -7,6 +7,7 @@ import java.util.Map;
 import java.util.Set;
 
 import jakarta.servlet.ServletException;
+import jakarta.servlet.annotation.MultipartConfig;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -14,6 +15,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import framework.annotation.Controller;
 import framework.annotation.UrlMapping;
 
+@MultipartConfig
 public class FrontServlet extends HttpServlet {
 
     private Map<String, VerbAction> mappings = new HashMap<>();

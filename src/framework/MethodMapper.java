@@ -6,6 +6,7 @@ import java.lang.reflect.Parameter;
 import java.util.Arrays;
 import java.util.List;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.Part;
 
 public class MethodMapper {
 
@@ -30,6 +31,22 @@ public class MethodMapper {
             // Nom du paramètre de la méthode Java
             String paramName = param.getName();
             System.out.println("Nom du paramètre lu par Reflection : " + paramName);
+
+            if (targetType == FileUpload.class) {
+                Part filePart = findFilePart(req, paramName);
+                args[i] = filePart == null ? null : FileUpload.fromPart(filePart);
+                continue;
+            }
+
+            if (targetType == FileUpload[].class) {
+                List<Part> fileParts = findFileParts(req, paramName);
+                FileUpload[] uploads = new FileUpload[fileParts.size()];
+                for (int j = 0; j < fileParts.size(); j++) {
+                    uploads[j] = FileUpload.fromPart(fileParts.get(j));
+                }
+                args[i] = uploads;
+                continue;
+            }
 
             // Gestion des Collections (ex: List)
             if (List.class.isAssignableFrom(targetType)) {
@@ -70,6 +87,34 @@ public class MethodMapper {
         }
 
         return args;
+    }
+
+    private static Part findFilePart(HttpServletRequest req, String parameterName) throws Exception {
+        List<Part> parts = findFileParts(req, parameterName);
+        if (parts.size() > 1) {
+            throw new IllegalArgumentException("Plusieurs fichiers reçus pour le paramètre " + parameterName);
+        }
+        return parts.isEmpty() ? null : parts.get(0);
+    }
+
+    private static List<Part> findFileParts(HttpServletRequest req, String parameterName) throws Exception {
+        List<Part> matchingParts = new java.util.ArrayList<>();
+        boolean hasJavaParameterName = parameterName != null && !parameterName.matches("arg\\d+");
+
+        for (Part part : req.getParts()) {
+            if (!isFilePart(part)) {
+                continue;
+            }
+            if (!hasJavaParameterName || parameterName.equals(part.getName())) {
+                matchingParts.add(part);
+            }
+        }
+        return matchingParts;
+    }
+
+    private static boolean isFilePart(Part part) {
+        String fileName = part.getSubmittedFileName();
+        return fileName != null && !fileName.trim().isEmpty();
     }
 
     /**
