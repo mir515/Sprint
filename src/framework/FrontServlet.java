@@ -82,6 +82,9 @@ public class FrontServlet extends HttpServlet {
         }
 
         try {
+            MySession userSession = SessionRegistryListener.getCurrentSession(req);
+            req.setAttribute("framework.session", userSession);
+
             Object[] args = MethodMapper.resolveParameters(method, req);
             resolveFileUploadArguments(method, req, args);
 
