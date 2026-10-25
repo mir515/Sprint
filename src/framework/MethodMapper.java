@@ -26,6 +26,11 @@ public class MethodMapper {
                 continue;
             }
 
+            if (targetType == MySession.class) {
+                args[i] = req.getAttribute("framework.session");
+                continue;
+            }
+
             if (HttpServletRequest.class.isAssignableFrom(targetType)) {
                 args[i] = req;
                 System.out.println("Injection directe de HttpServletRequest réussie !");
