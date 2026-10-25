@@ -1,11 +1,13 @@
 package framework;
 
 import jakarta.servlet.http.HttpSession;
+import java.util.Locale;
 
 /** A small framework wrapper around the container-managed HTTP session. */
 public final class MySession {
 
     private static final String CONNECTED_USER_ATTRIBUTE = "CONNECTED_USER";
+    private static final String USER_ROLE_ATTRIBUTE = "USER_ROLE";
 
     private final HttpSession httpSession;
 
@@ -41,6 +43,24 @@ public final class MySession {
 
     public boolean isAuthenticated() {
         return httpSession.getAttribute(CONNECTED_USER_ATTRIBUTE) != null;
+    }
+
+    public void setRole(String role) {
+        if (role == null || role.trim().isEmpty()) {
+            httpSession.removeAttribute(USER_ROLE_ATTRIBUTE);
+            return;
+        }
+        httpSession.setAttribute(USER_ROLE_ATTRIBUTE, role.trim().toUpperCase(Locale.ROOT));
+    }
+
+    public String getRole() {
+        return (String) httpSession.getAttribute(USER_ROLE_ATTRIBUTE);
+    }
+
+    public boolean hasRole(String role) {
+        String currentRole = getRole();
+        return currentRole != null && role != null
+                && currentRole.equalsIgnoreCase(role.trim());
     }
 
     public String getId() {
