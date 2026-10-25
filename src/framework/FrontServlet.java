@@ -20,6 +20,7 @@ import jakarta.servlet.http.Part;
 
 import framework.annotation.UrlMapping;
 import framework.annotation.Authenticated;
+import framework.annotation.RoleRequired;
 
 @MultipartConfig
 public class FrontServlet extends HttpServlet {
@@ -87,9 +88,26 @@ public class FrontServlet extends HttpServlet {
             req.setAttribute("framework.session", userSession);
 
             Authenticated authentication = method.getAnnotation(Authenticated.class);
-            if (authentication != null && !userSession.isAuthenticated()) {
-                req.setAttribute("error", authentication.message());
-                req.getRequestDispatcher(authentication.loginView()).forward(req, resp);
+            RoleRequired roleRequirement = method.getAnnotation(RoleRequired.class);
+            if (!userSession.isAuthenticated() && (authentication != null || roleRequirement != null)) {
+                String loginView;
+                String message;
+
+                if (roleRequirement != null) {
+                    loginView = roleRequirement.loginView();
+                    message = roleRequirement.message();
+                } else {
+                    loginView = authentication.loginView();
+                    message = authentication.message();
+                }
+
+                forwardToLogin(req, resp, loginView, message);
+                return;
+            }
+
+            if (roleRequirement != null && !hasRequiredRole(userSession, roleRequirement.value())) {
+                resp.sendError(HttpServletResponse.SC_FORBIDDEN,
+                        "Votre rôle ne permet pas d'accéder à cette page.");
                 return;
             }
 
@@ -108,6 +126,21 @@ public class FrontServlet extends HttpServlet {
         } catch (Exception e) {
             throw new ServletException("Erreur lors de l'exécution de la méthode " + method.getName(), e);
         }
+    }
+
+    private boolean hasRequiredRole(MySession session, String[] requiredRoles) {
+        for (String requiredRole : requiredRoles) {
+            if (session.hasRole(requiredRole)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void forwardToLogin(HttpServletRequest req, HttpServletResponse resp,
+            String loginView, String message) throws ServletException, IOException {
+        req.setAttribute("error", message);
+        req.getRequestDispatcher(loginView).forward(req, resp);
     }
 
     /** Builds FileUpload arguments and fields from multipart parts. */
