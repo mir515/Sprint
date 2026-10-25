@@ -39,6 +39,10 @@ public final class MySession {
         return getAttribute(CONNECTED_USER_ATTRIBUTE, userType);
     }
 
+    public boolean isAuthenticated() {
+        return httpSession.getAttribute(CONNECTED_USER_ATTRIBUTE) != null;
+    }
+
     public String getId() {
         return httpSession.getId();
     }

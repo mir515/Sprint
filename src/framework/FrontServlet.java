@@ -19,6 +19,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.Part;
 
 import framework.annotation.UrlMapping;
+import framework.annotation.Authenticated;
 
 @MultipartConfig
 public class FrontServlet extends HttpServlet {
@@ -84,6 +85,13 @@ public class FrontServlet extends HttpServlet {
         try {
             MySession userSession = SessionRegistryListener.getCurrentSession(req);
             req.setAttribute("framework.session", userSession);
+
+            Authenticated authentication = method.getAnnotation(Authenticated.class);
+            if (authentication != null && !userSession.isAuthenticated()) {
+                req.setAttribute("error", authentication.message());
+                req.getRequestDispatcher(authentication.loginView()).forward(req, resp);
+                return;
+            }
 
             Object[] args = MethodMapper.resolveParameters(method, req);
             resolveFileUploadArguments(method, req, args);
