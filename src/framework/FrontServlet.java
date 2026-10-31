@@ -26,6 +26,7 @@ import framework.annotation.RoleRequired;
 public class FrontServlet extends HttpServlet {
 
     private final Map<String, VerbAction> mappings = new HashMap<>();
+    private final Map<Class<?>, Object> controllerInstances = new HashMap<>();
 
     @Override
     public void init() throws ServletException {
@@ -54,7 +55,13 @@ public class FrontServlet extends HttpServlet {
      */
     private void registerController(String className) throws Exception {
         Class<?> clazz = Class.forName(className);
-        Object controllerInstance = clazz.getDeclaredConstructor().newInstance();
+
+        
+        Object controllerInstance = controllerInstances.get(clazz);
+        if (controllerInstance == null) {
+            controllerInstance = clazz.getDeclaredConstructor().newInstance();
+            controllerInstances.put(clazz, controllerInstance);
+        }
 
         for (Method method : clazz.getDeclaredMethods()) {
             if (method.isAnnotationPresent(UrlMapping.class)) {
